@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Member, AttendanceRecord, AttendanceStatus } from '../types';
-import { getMembers, getRecordsByDate, saveRecord } from '../services/storageService';
+import { getMembers, getRecordsByDate, saveRecord, syncOneRecordToSheet } from '../services/storageService';
 import { Search, CheckCircle, XCircle, Clock, Calendar, Filter, CheckSquare, Square, LogOut, CalendarDays, MapPin, Building, Lock } from 'lucide-react';
 
 interface DailyAttendanceProps {
@@ -56,6 +56,9 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
             };
             saveRecord(newRecord);
             loadData();
+            // Sync removal to sheet
+            const member = members.find(m => m.id === memberId);
+            if(member) syncOneRecordToSheet(newRecord, member);
         }
         return;
     }
@@ -71,21 +74,34 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     };
     saveRecord(newRecord);
     loadData();
+
+    // Real-time Sync
+    const member = members.find(m => m.id === memberId);
+    if(member) syncOneRecordToSheet(newRecord, member);
   };
 
   const handleNoteChange = (memberId: string, note: string) => {
     const existing = records.find(r => r.memberId === memberId);
     if (existing) {
-       saveRecord({ ...existing, note });
+       const newRecord = { ...existing, note };
+       saveRecord(newRecord);
        loadData();
+       // Note change is less critical, maybe debounce? But for now sync directly
+       const member = members.find(m => m.id === memberId);
+       if(member) syncOneRecordToSheet(newRecord, member);
     }
   };
 
   const handleTimeChange = (memberId: string, field: 'checkInTime' | 'checkOutTime', value: string) => {
       const existing = records.find(r => r.memberId === memberId);
       if (existing) {
-          saveRecord({ ...existing, [field]: value });
+          const newRecord = { ...existing, [field]: value };
+          saveRecord(newRecord);
           loadData();
+          
+          // Real-time Sync
+          const member = members.find(m => m.id === memberId);
+          if(member) syncOneRecordToSheet(newRecord, member);
       }
   };
 
@@ -110,17 +126,13 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     let processed = 0;
 
     selectedIds.forEach(id => {
-      // Check if member is on vacation/excused
       const currentStatus = getMemberStatus(id);
-      
-      // If the member is currently EXCUSED, and we are trying to set a different status (e.g. Present), SKIP them.
-      // Exception: If we are trying to set them TO Excused, it's fine (idempotent).
       if (currentStatus === AttendanceStatus.EXCUSED && status !== AttendanceStatus.EXCUSED) {
           skipped++;
           return;
       }
 
-      handleStatusChange(id, status);
+      handleStatusChange(id, status); // This already triggers sync internally
       processed++;
     });
 
@@ -128,7 +140,7 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
         alert(`총 ${processed}명 처리되었습니다.\n(휴가 중인 인원 ${skipped}명은 변경되지 않았습니다)`);
     }
 
-    setSelectedIds(new Set()); // Clear selection
+    setSelectedIds(new Set()); 
   };
 
   const handleBatchTime = (field: 'checkInTime' | 'checkOutTime', time: string) => {
@@ -138,7 +150,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     selectedIds.forEach(id => {
       const existing = records.find(r => r.memberId === id);
       
-      // Strict Lock: If Excused, cannot set time.
       if (existing?.status === AttendanceStatus.EXCUSED) {
           skipped++;
           return;
@@ -148,21 +159,23 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
         id: existing ? existing.id : `${currentDate}-${id}`,
         memberId: id,
         date: currentDate,
-        status: existing?.status || AttendanceStatus.PRESENT, // Default to present if setting time
+        status: existing?.status || AttendanceStatus.PRESENT, 
         note: existing?.note || '',
         checkInTime: existing?.checkInTime || '',
         checkOutTime: existing?.checkOutTime || ''
       };
       
-      // Override specific time
       newRecord[field] = time;
       
-      // If setting check-in time and status is pending, auto set to Present
       if (field === 'checkInTime' && (!existing || existing.status === AttendanceStatus.PENDING)) {
          newRecord.status = AttendanceStatus.PRESENT;
       }
 
       saveRecord(newRecord);
+      
+      const member = members.find(m => m.id === id);
+      if(member) syncOneRecordToSheet(newRecord, member); // Sync
+
       processed++;
     });
     
@@ -202,9 +215,9 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     <button
       onClick={(e) => { 
           e.stopPropagation(); 
-          if (!disabled || status === AttendanceStatus.EXCUSED) onClick(); // Allow clicking excused button even if disabled (to unlock)
+          if (!disabled || status === AttendanceStatus.EXCUSED) onClick(); 
       }}
-      disabled={disabled && status !== AttendanceStatus.EXCUSED} // Only disable non-excused buttons if locked
+      disabled={disabled && status !== AttendanceStatus.EXCUSED} 
       className={`p-2 rounded-md flex items-center justify-center transition-all ${
         current === status 
         ? `${color} ring-2 ring-offset-1 ring-slate-300 shadow-md` 

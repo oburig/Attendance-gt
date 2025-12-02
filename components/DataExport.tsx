@@ -193,7 +193,7 @@ export const DataExport: React.FC = () => {
       }
 
       const today = new Date().toISOString().slice(0, 10);
-      if (!window.confirm(`${today} 날짜의 데이터를 구글 시트로 전송하시겠습니까?`)) return;
+      if (!window.confirm(`${today} 날짜의 데이터를 구글 시트로 전송하시겠습니까?\n(기존 데이터가 있다면 업데이트됩니다)`)) return;
 
       setIsSending(true);
       try {
@@ -206,44 +206,72 @@ export const DataExport: React.FC = () => {
       }
   };
 
+  // Improved Apps Script to handle both Batch and Single Record Updates
   const appsScriptCode = `function doGet(e) {
-  // 브라우저 주소창 테스트용
   return ContentService.createTextOutput("연결 성공! 스크립트가 정상 작동 중입니다.").setMimeType(ContentService.MimeType.TEXT);
 }
 
 function doPost(e) {
   var lock = LockService.getScriptLock();
-  lock.tryLock(10000); // 동시성 제어
+  lock.tryLock(10000);
 
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var data = JSON.parse(e.postData.contents);
+    var records = data.records;
     
-    // 헤더가 없으면 추가
+    // 1. 헤더가 없으면 생성
     if (sheet.getLastRow() === 0) {
       sheet.appendRow(["전송일시", "날짜", "이름", "부서", "직급", "이용구분", "상세장소", "상태", "비고", "출근시간", "퇴근시간"]);
     }
     
-    var records = data.records;
-    var timestamp = new Date().toLocaleString();
-    var newRows = [];
-
-    // 데이터 배열 생성 (속도 향상)
-    records.forEach(function(r) {
-      newRows.push([
-        timestamp,
-        r.date, r.name, r.team, r.position, 
-        r.workLocation, r.workPlace, 
-        r.status, r.note, r.checkInTime, r.checkOutTime
-      ]);
-    });
-    
-    // 한 번에 기록
-    if (newRows.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+    // 2. 기존 데이터 로드 (중복 체크용)
+    var lastRow = sheet.getLastRow();
+    var existingData = [];
+    if (lastRow > 1) {
+      // 날짜(B열=인덱스1), 이름(C열=인덱스2) 만 가져옴
+      existingData = sheet.getRange(2, 2, lastRow - 1, 2).getValues(); 
     }
     
-    return ContentService.createTextOutput(JSON.stringify({"result":"success", "count": newRows.length}))
+    var updates = [];
+    var appends = [];
+    var timestamp = new Date().toLocaleString();
+
+    records.forEach(function(record) {
+      var foundRowIndex = -1;
+      
+      // 기존 데이터에서 날짜와 이름이 같은 행 찾기
+      for (var i = 0; i < existingData.length; i++) {
+        var exDate = existingData[i][0];
+        // 날짜 형식이 다를 수 있으므로 문자열로 비교
+        if (exDate == record.date && existingData[i][1] == record.name) {
+          foundRowIndex = i + 2; // 헤더(1) + 0-based index(i) + 1 = 실제 행 번호
+          break;
+        }
+      }
+
+      if (foundRowIndex !== -1) {
+        // [업데이트] 상태(H), 비고(I), 출근(J), 퇴근(K) -> 컬럼 8, 9, 10, 11
+        // 전송일시(A)도 업데이트 -> 컬럼 1
+        sheet.getRange(foundRowIndex, 1).setValue(timestamp);
+        sheet.getRange(foundRowIndex, 8, 1, 4).setValues([[record.status, record.note, record.checkInTime, record.checkOutTime]]);
+      } else {
+        // [추가]
+        appends.push([
+          timestamp,
+          record.date, record.name, record.team, record.position, 
+          record.workLocation, record.workPlace, 
+          record.status, record.note, record.checkInTime, record.checkOutTime
+        ]);
+      }
+    });
+
+    // 신규 데이터 일괄 추가
+    if (appends.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, appends[0].length).setValues(appends);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({"result":"success", "updates": records.length}))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
@@ -265,10 +293,10 @@ function doPost(e) {
       {/* 1. Google Sheet Integration */}
       <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
           <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
-              <CloudUpload className="text-green-600"/> 구글 시트 자동 연동
+              <CloudUpload className="text-green-600"/> 구글 시트 실시간 연동
           </h2>
           <p className="text-slate-500 mb-6">
-              버튼 클릭 한 번으로 오늘의 출석 데이터를 구글 시트에 차곡차곡 쌓을 수 있습니다.
+              실시간 연동을 설정하면 출석/퇴근 버튼을 누를 때마다 자동으로 시트에 반영됩니다.
           </p>
 
           <div className="bg-green-50 border border-green-100 rounded-xl p-6 mb-6">
@@ -276,14 +304,14 @@ function doPost(e) {
                   onClick={() => setIsGuideOpen(!isGuideOpen)}
                   className="flex items-center justify-between w-full text-left font-bold text-green-800 focus:outline-none"
               >
-                  <span className="flex items-center gap-2"><HelpCircle size={18}/> 초기 설정 가이드 (설정 후 데이터가 안 넘어갈 때 필독)</span>
+                  <span className="flex items-center gap-2"><HelpCircle size={18}/> 실시간 연동 설정 가이드 (코드 업데이트 필수)</span>
                   {isGuideOpen ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
               </button>
               
               {isGuideOpen && (
                   <div className="mt-4 space-y-4 text-sm text-slate-700 bg-white p-4 rounded-lg border border-green-200">
                       <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded font-bold mb-4">
-                          ⚠️ 주의: 코드를 수정했다면 반드시 [배포] &gt; [새 배포]를 눌러야 적용됩니다! (그냥 저장만 하면 적용 안 됨)
+                          ⚠️ 기존 코드는 덮어쓰기 기능이 없습니다. 반드시 아래 새 코드로 교체하고 [새 배포] 해주세요.
                       </div>
                       <ol className="list-decimal list-inside space-y-3">
                           <li>
@@ -302,12 +330,12 @@ function doPost(e) {
                               </div>
                           </li>
                           <li>
-                              오른쪽 상단 <strong>배포 &gt; 새 배포</strong>를 클릭합니다.
+                              오른쪽 상단 <strong>배포 &gt; 새 배포</strong>를 클릭합니다. (기존 배포 수정 X, 꼭 새 배포)
                           </li>
                           <li>
                               설정창에서 다음 내용을 꼭 확인하세요:
                               <ul className="list-disc list-inside ml-4 mt-1 text-slate-600 bg-slate-50 p-2 rounded">
-                                  <li>설명: (버전 관리용, 예: v2)</li>
+                                  <li>설명: v2 (업데이트)</li>
                                   <li>다음 사용자 권한으로 실행: <strong>나(Me)</strong></li>
                                   <li>액세스 권한이 있는 사용자: <strong>모든 사용자 (Anyone)</strong> <span className="text-red-500 font-bold">← 필수!</span></li>
                               </ul>
@@ -356,7 +384,7 @@ function doPost(e) {
                   {isSending ? (
                       <>전송 중...</>
                   ) : (
-                      <><CloudUpload size={18}/> 오늘 데이터 전송하기</>
+                      <><CloudUpload size={18}/> 오늘 데이터 강제 전송</>
                   )}
               </button>
           </div>

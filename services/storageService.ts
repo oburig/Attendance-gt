@@ -1,4 +1,3 @@
-
 import { Member, AttendanceRecord, AttendanceStatus, DailyStats, VacationRequest, VacationStatus, VacationBalance } from '../types';
 import { INITIAL_MEMBERS } from '../constants';
 
@@ -282,6 +281,22 @@ export const getSheetUrl = () => {
     return localStorage.getItem(SHEET_URL_KEY) || '';
 };
 
+// Helper to format payload
+const createPayload = (record: AttendanceRecord, member: Member) => {
+    return {
+        date: record.date,
+        name: member.name,
+        team: member.team,
+        position: member.position,
+        workLocation: member.workLocation || '',
+        workPlace: member.workPlace || '',
+        status: record.status || AttendanceStatus.PENDING,
+        note: record.note || '',
+        checkInTime: record.checkInTime || '',
+        checkOutTime: record.checkOutTime || ''
+    };
+};
+
 export const sendToGoogleSheet = async (date: string) => {
     const url = getSheetUrl();
     if (!url) throw new Error("구글 시트 URL이 설정되지 않았습니다. 설정에서 URL을 입력해주세요.");
@@ -291,24 +306,40 @@ export const sendToGoogleSheet = async (date: string) => {
     
     const payloadData = members.map(member => {
         const record = records.find(r => r.memberId === member.id);
-        return {
-            date: date,
-            name: member.name,
-            team: member.team,
-            position: member.position,
-            workLocation: member.workLocation || '',
-            workPlace: member.workPlace || '',
-            status: record?.status || AttendanceStatus.PENDING,
-            note: record?.note || '',
-            checkInTime: record?.checkInTime || '',
-            checkOutTime: record?.checkOutTime || ''
+        if (!record && record?.status === AttendanceStatus.PENDING) return null; // Skip if no record/pending
+        
+        // Even if pending, we might want to send if we are forcing sync?
+        // Let's stick to sending explicit records
+        const effectiveRecord = record || { 
+            id: '', memberId: member.id, date, status: AttendanceStatus.PENDING, note: '', checkInTime: '', checkOutTime: '' 
         };
-    }).filter(item => item.status !== AttendanceStatus.PENDING); 
+
+        return createPayload(effectiveRecord, member);
+    }).filter(item => item !== null); 
 
     if (payloadData.length === 0) {
-        throw new Error("해당 날짜에 전송할 기록(출석/결석 등)이 없습니다.");
+        throw new Error("해당 날짜에 전송할 기록이 없습니다.");
     }
 
+    await performSync(url, payloadData);
+};
+
+// New function for real-time sync of a single record
+export const syncOneRecordToSheet = async (record: AttendanceRecord, member: Member) => {
+    const url = getSheetUrl();
+    if (!url) return; // Fail silently if no URL (don't block UI)
+
+    const payload = [createPayload(record, member)];
+    
+    // We don't want to alert on every click if it fails, just log it
+    try {
+        await performSync(url, payload);
+    } catch (e) {
+        console.error("Real-time sync failed:", e);
+    }
+};
+
+const performSync = async (url: string, records: any[]) => {
     try {
         const response = await fetch(url, {
             method: 'POST',
@@ -316,7 +347,7 @@ export const sendToGoogleSheet = async (date: string) => {
             headers: {
                 'Content-Type': 'text/plain;charset=utf-8', 
             },
-            body: JSON.stringify({ records: payloadData }),
+            body: JSON.stringify({ records: records }),
         });
 
         if (!response.ok) {
@@ -340,4 +371,4 @@ export const sendToGoogleSheet = async (date: string) => {
         console.error("Google Sheet Send Error:", error);
         throw error;
     }
-};
+}
