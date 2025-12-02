@@ -244,6 +244,7 @@ export const VacationApproval: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                  <div className="space-y-2">
                    <label className="block text-sm font-medium text-slate-700">시작일</label>
+                   {/* Invisible Overlay Date Picker */}
                    <div className="relative group">
                        <div className="w-full px-4 py-3 border border-blue-200 bg-blue-50 text-blue-900 rounded-lg flex items-center justify-between pointer-events-none">
                             <span>{startDate || 'YYYY-MM-DD'}</span>
@@ -260,6 +261,7 @@ export const VacationApproval: React.FC = () => {
                  </div>
                  <div className="space-y-2">
                    <label className="block text-sm font-medium text-slate-700">종료일</label>
+                   {/* Invisible Overlay Date Picker */}
                    <div className="relative group">
                        <div className="w-full px-4 py-3 border border-blue-200 bg-blue-50 text-blue-900 rounded-lg flex items-center justify-between pointer-events-none">
                             <span>{endDate || 'YYYY-MM-DD'}</span>
@@ -317,6 +319,7 @@ export const VacationApproval: React.FC = () => {
           </div>
         )}
 
+        {/* ... Approval and Management Tabs ... */}
         {activeTab === 'approval' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col h-full">
              <div className="p-4 bg-blue-50 border-b border-blue-100 text-sm text-blue-800 flex items-center gap-2">

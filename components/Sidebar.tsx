@@ -1,5 +1,7 @@
 import React from 'react';
 import { LayoutDashboard, CheckSquare, Users, Settings, ClipboardCheck } from 'lucide-react';
+import { getVacationRequests } from '../services/storageService';
+import { VacationStatus } from '../types';
 
 interface SidebarProps {
   currentView: 'dashboard' | 'daily' | 'members' | 'approval' | 'settings';
@@ -7,13 +9,25 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView }) => {
-  const menuItems = [
+  // Calculate Pending Vacation Requests Count
+  const pendingVacationCount = getVacationRequests().filter(
+      r => r.status === VacationStatus.PENDING || r.status === VacationStatus.SECRETARY_APPROVED
+  ).length;
+
+  type MenuItem = {
+    id: SidebarProps['currentView'];
+    label: string;
+    icon: React.ElementType;
+    badge?: number;
+  };
+
+  const menuItems: MenuItem[] = [
     { id: 'dashboard', label: '대시보드', icon: LayoutDashboard },
     { id: 'daily', label: '오늘의 출석', icon: CheckSquare },
     { id: 'members', label: '개인별 현황', icon: Users },
-    { id: 'approval', label: '전자결재 (휴가)', icon: ClipboardCheck },
+    { id: 'approval', label: '전자결재 (휴가)', icon: ClipboardCheck, badge: pendingVacationCount > 0 ? pendingVacationCount : undefined },
     { id: 'settings', label: '데이터 관리', icon: Settings },
-  ] as const;
+  ];
 
   return (
     <aside className="w-64 bg-slate-900 text-white flex flex-col h-full shadow-xl z-20">
@@ -32,14 +46,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView }) =
             <button
               key={item.id}
               onClick={() => onChangeView(item.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 ${
                 isActive
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <Icon size={20} />
-              <span className="font-medium">{item.label}</span>
+              <div className="flex items-center gap-3">
+                  <Icon size={20} />
+                  <span className="font-medium">{item.label}</span>
+              </div>
+              {item.badge && (
+                  <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
+                      {item.badge}
+                  </span>
+              )}
             </button>
           );
         })}

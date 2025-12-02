@@ -5,7 +5,7 @@ import { DailyAttendance } from './components/DailyAttendance';
 import { MemberStats } from './components/MemberStats';
 import { DataExport } from './components/DataExport';
 import { VacationApproval } from './components/VacationApproval';
-import { Edit3, Calendar } from 'lucide-react';
+import { Edit3 } from 'lucide-react';
 
 type View = 'dashboard' | 'daily' | 'members' | 'approval' | 'settings';
 
@@ -18,7 +18,13 @@ const App: React.FC = () => {
   const renderContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard today={selectedDate} onDateChange={setSelectedDate} />;
+        return (
+          <Dashboard 
+            today={selectedDate} 
+            onDateChange={setSelectedDate} 
+            onNavigateToApproval={() => setCurrentView('approval')}
+          />
+        );
       case 'daily':
         return (
           <DailyAttendance 
@@ -33,7 +39,13 @@ const App: React.FC = () => {
       case 'settings':
         return <DataExport />;
       default:
-        return <Dashboard today={selectedDate} onDateChange={setSelectedDate} />;
+        return (
+          <Dashboard 
+            today={selectedDate} 
+            onDateChange={setSelectedDate} 
+            onNavigateToApproval={() => setCurrentView('approval')}
+          />
+        );
     }
   };
 

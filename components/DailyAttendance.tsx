@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
 import { Member, AttendanceRecord, AttendanceStatus } from '../types';
-import { getMembers, getRecordsByDate, saveRecord, syncOneRecordToSheet } from '../services/storageService';
-import { Search, CheckCircle, XCircle, Clock, Calendar, Filter, CheckSquare, Square, LogOut, CalendarDays, MapPin, Building, Lock } from 'lucide-react';
+import { getMembers, getRecordsByDate, saveRecord, sendToGoogleSheet, getSheetUrl } from '../services/storageService';
+import { Search, CheckCircle, XCircle, Clock, Calendar, Filter, CheckSquare, Square, LogOut, CalendarDays, MapPin, Building, Lock, CloudUpload, Loader2 } from 'lucide-react';
 
 interface DailyAttendanceProps {
   currentDate: string;
@@ -21,6 +22,9 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
   const [batchCheckIn, setBatchCheckIn] = useState('09:30'); 
   const [batchCheckOut, setBatchCheckOut] = useState('16:30');
 
+  // Manual Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // Reload data
   const loadData = () => {
     const m = getMembers();
@@ -34,6 +38,36 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     setSelectedIds(new Set()); // Reset selection on date change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDate]);
+
+  const handleManualSync = async () => {
+      // 1. URL Check
+      const url = getSheetUrl();
+      if (!url) {
+          alert("구글 시트 URL이 설정되지 않았습니다.\n'데이터 관리' 메뉴에서 URL을 먼저 저장해주세요.");
+          return;
+      }
+
+      // 2. Data Check
+      if (members.length === 0) {
+          alert("전송할 구성원 데이터가 없습니다.");
+          return;
+      }
+
+      // records.length가 아니라 전체 members.length를 보여주어 0건이라도 안심하고 보내게 함
+      if (!window.confirm(`${currentDate} 기준 전체 구성원 ${members.length}명의 데이터를\n구글 시트로 전송하시겠습니까?\n(미체크 인원은 '대기' 상태로 전송됩니다)`)) return;
+
+      setIsSyncing(true);
+      try {
+          console.log("Starting sync...");
+          await sendToGoogleSheet(currentDate);
+          alert('전송이 완료되었습니다!\n구글 시트에서 데이터를 확인해주세요.');
+      } catch (e: any) {
+          console.error("Sync failed", e);
+          alert(`전송 실패: ${e.message}\n\n구글 시트의 'Apps Script' 배포 상태를 확인해주세요.`);
+      } finally {
+          setIsSyncing(false);
+      }
+  };
 
   const handleStatusChange = (memberId: string, status: AttendanceStatus) => {
     const existing = records.find(r => r.memberId === memberId);
@@ -56,9 +90,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
             };
             saveRecord(newRecord);
             loadData();
-            // Sync removal to sheet
-            const member = members.find(m => m.id === memberId);
-            if(member) syncOneRecordToSheet(newRecord, member);
         }
         return;
     }
@@ -74,10 +105,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
     };
     saveRecord(newRecord);
     loadData();
-
-    // Real-time Sync
-    const member = members.find(m => m.id === memberId);
-    if(member) syncOneRecordToSheet(newRecord, member);
   };
 
   const handleNoteChange = (memberId: string, note: string) => {
@@ -86,9 +113,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
        const newRecord = { ...existing, note };
        saveRecord(newRecord);
        loadData();
-       // Note change is less critical, maybe debounce? But for now sync directly
-       const member = members.find(m => m.id === memberId);
-       if(member) syncOneRecordToSheet(newRecord, member);
     }
   };
 
@@ -98,10 +122,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
           const newRecord = { ...existing, [field]: value };
           saveRecord(newRecord);
           loadData();
-          
-          // Real-time Sync
-          const member = members.find(m => m.id === memberId);
-          if(member) syncOneRecordToSheet(newRecord, member);
       }
   };
 
@@ -132,7 +152,17 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
           return;
       }
 
-      handleStatusChange(id, status); // This already triggers sync internally
+      const existing = records.find(r => r.memberId === id);
+      const newRecord: AttendanceRecord = {
+          id: existing ? existing.id : `${currentDate}-${id}`,
+          memberId: id,
+          date: currentDate,
+          status,
+          note: existing?.note || '',
+          checkInTime: existing?.checkInTime || (status === AttendanceStatus.PRESENT ? new Date().toTimeString().slice(0, 5) : ''),
+          checkOutTime: existing?.checkOutTime || ''
+      };
+      saveRecord(newRecord);
       processed++;
     });
 
@@ -140,6 +170,7 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
         alert(`총 ${processed}명 처리되었습니다.\n(휴가 중인 인원 ${skipped}명은 변경되지 않았습니다)`);
     }
 
+    loadData();
     setSelectedIds(new Set()); 
   };
 
@@ -172,10 +203,6 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
       }
 
       saveRecord(newRecord);
-      
-      const member = members.find(m => m.id === id);
-      if(member) syncOneRecordToSheet(newRecord, member); // Sync
-
       processed++;
     });
     
@@ -240,28 +267,45 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
              <CalendarDays size={24}/>
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-800 mb-1">출석 체크 관리</h2>
-            {/* INVISIBLE OVERLAY DATE PICKER - Guaranteed to work */}
-            <div className="relative inline-flex items-center gap-3 group">
-                {/* Visual Layer */}
-                <div className="flex items-center gap-3 pointer-events-none">
-                    <div className="px-4 py-2 bg-white border-2 border-blue-500 rounded-xl text-xl font-bold text-slate-800 shadow-sm min-w-[140px] text-center">
-                        {currentDate}
+            <h2 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
+                출석 체크 관리
+            </h2>
+            
+            <div className="flex items-center gap-2 mt-1">
+                {/* INVISIBLE OVERLAY DATE PICKER - Guaranteed to work */}
+                <div className="relative inline-flex items-center gap-2 group cursor-pointer">
+                    {/* Visual Layer (What the user sees) */}
+                    <div className="flex items-center gap-2 pointer-events-none">
+                        <div className="px-3 py-1.5 bg-white border-2 border-blue-500 rounded-lg text-lg font-bold text-slate-800 shadow-sm min-w-[130px] text-center">
+                            {currentDate}
+                        </div>
+                        <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm whitespace-nowrap hidden sm:block">
+                            {getDayName(currentDate)}
+                        </span>
+                        <div className="p-2 bg-blue-600 text-white rounded-lg shadow-md flex items-center justify-center group-hover:bg-blue-700 transition-colors">
+                            <Calendar size={20} />
+                        </div>
                     </div>
-                    <span className="text-lg font-bold text-blue-600 bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 shadow-sm whitespace-nowrap hidden sm:block">
-                        {getDayName(currentDate)}
-                    </span>
-                    <div className="p-3 bg-blue-600 text-white rounded-xl shadow-md flex items-center justify-center group-hover:bg-blue-700 transition-colors">
-                        <Calendar size={24} />
-                    </div>
+                    {/* Interaction Layer (Invisible Input) - What the user actually clicks */}
+                    <input 
+                      type="date" 
+                      value={currentDate}
+                      onChange={(e) => onDateChange(e.target.value)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
                 </div>
-                {/* Interaction Layer (Invisible Input) */}
-                <input 
-                  type="date" 
-                  value={currentDate}
-                  onChange={(e) => onDateChange(e.target.value)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                />
+
+                {/* Manual Sync Button - Added relative z-50 to ensure clickability over potential overlays */}
+                <button 
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  className={`ml-2 relative z-50 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold text-white transition-all shadow-sm
+                      ${isSyncing ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-green-200'}
+                  `}
+                >
+                    {isSyncing ? <Loader2 size={18} className="animate-spin"/> : <CloudUpload size={18}/>}
+                    {isSyncing ? '전송 중...' : '구글 시트 전송'}
+                </button>
             </div>
           </div>
         </div>
@@ -477,11 +521,11 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
                   </td>
                   <td className="p-4" onClick={e => e.stopPropagation()}>
                      <div className="flex items-center gap-2">
-                         <Clock size={14} className="text-slate-400"/>
+                         <Clock size={16} className={record?.checkInTime ? "text-blue-500" : "text-slate-300"}/>
                          <input 
                            type="time" 
-                           className={`border-2 rounded px-2 py-1 text-sm font-bold focus:outline-blue-500 bg-blue-50 cursor-pointer w-28 transition-colors
-                                ${isExcused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'border-blue-200 text-blue-900'}`}
+                           className={`border-2 rounded-lg px-2 py-1.5 text-sm font-bold focus:outline-blue-500 w-32 transition-all shadow-sm
+                                ${isExcused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-blue-50 border-blue-200 text-blue-900 focus:border-blue-500 focus:bg-white'}`}
                            value={record?.checkInTime || ''}
                            disabled={isExcused}
                            onChange={(e) => handleTimeChange(member.id, 'checkInTime', e.target.value)}
@@ -490,11 +534,11 @@ export const DailyAttendance: React.FC<DailyAttendanceProps> = ({ currentDate, o
                   </td>
                   <td className="p-4" onClick={e => e.stopPropagation()}>
                      <div className="flex items-center gap-2">
-                         <LogOut size={14} className="text-slate-400"/>
+                         <LogOut size={16} className={record?.checkOutTime ? "text-slate-700" : "text-slate-300"}/>
                          <input 
                            type="time" 
-                           className={`border-2 rounded px-2 py-1 text-sm font-bold focus:outline-blue-500 bg-blue-50 cursor-pointer w-28 transition-colors
-                                ${isExcused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'border-blue-200 text-blue-900'}`}
+                           className={`border-2 rounded-lg px-2 py-1.5 text-sm font-bold focus:outline-blue-500 w-32 transition-all shadow-sm
+                                ${isExcused ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-slate-50 border-slate-200 text-slate-700 focus:border-slate-500 focus:bg-white'}`}
                            value={record?.checkOutTime || ''}
                            disabled={isExcused}
                            onChange={(e) => handleTimeChange(member.id, 'checkOutTime', e.target.value)}

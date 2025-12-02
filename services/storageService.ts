@@ -299,51 +299,58 @@ const createPayload = (record: AttendanceRecord, member: Member) => {
 
 export const sendToGoogleSheet = async (date: string) => {
     const url = getSheetUrl();
-    if (!url) throw new Error("구글 시트 URL이 설정되지 않았습니다. 설정에서 URL을 입력해주세요.");
+    if (!url) throw new Error("구글 시트 URL이 설정되지 않았습니다. '데이터 관리' 메뉴에서 URL을 저장해주세요.");
 
     const members = getMembers();
     const records = getRecordsByDate(date);
     
+    // Create payload for ALL members (don't filter out pending)
     const payloadData = members.map(member => {
         const record = records.find(r => r.memberId === member.id);
-        if (!record && record?.status === AttendanceStatus.PENDING) return null; // Skip if no record/pending
         
-        // Even if pending, we might want to send if we are forcing sync?
-        // Let's stick to sending explicit records
+        // If record exists, use it. If not, create a dummy PENDING record.
         const effectiveRecord = record || { 
-            id: '', memberId: member.id, date, status: AttendanceStatus.PENDING, note: '', checkInTime: '', checkOutTime: '' 
+            id: '', 
+            memberId: member.id, 
+            date, 
+            status: AttendanceStatus.PENDING, 
+            note: '', 
+            checkInTime: '', 
+            checkOutTime: '' 
         };
 
         return createPayload(effectiveRecord, member);
-    }).filter(item => item !== null); 
+    });
 
     if (payloadData.length === 0) {
-        throw new Error("해당 날짜에 전송할 기록이 없습니다.");
+        throw new Error("전송할 데이터가 없습니다. (구성원 명단을 확인해주세요)");
     }
 
     await performSync(url, payloadData);
 };
 
-// New function for real-time sync of a single record
+// New function for real-time sync of a single record (Optional use)
 export const syncOneRecordToSheet = async (record: AttendanceRecord, member: Member) => {
     const url = getSheetUrl();
-    if (!url) return; // Fail silently if no URL (don't block UI)
+    if (!url) return; 
 
     const payload = [createPayload(record, member)];
     
-    // We don't want to alert on every click if it fails, just log it
     try {
         await performSync(url, payload);
     } catch (e) {
         console.error("Real-time sync failed:", e);
+        throw e;
     }
 };
 
 const performSync = async (url: string, records: any[]) => {
     try {
+        console.log("Sending to:", url);
         const response = await fetch(url, {
             method: 'POST',
             redirect: 'follow', 
+            credentials: 'omit', // Prevent CORS cookie issues
             headers: {
                 'Content-Type': 'text/plain;charset=utf-8', 
             },
@@ -363,7 +370,7 @@ const performSync = async (url: string, records: any[]) => {
             return json;
         } catch (e) {
             if (text.includes('Error') || text.includes('Exception')) {
-                throw new Error('스크립트 실행 중 오류가 발생했습니다. 권한 설정을 확인하세요.');
+                throw new Error('스크립트 실행 중 오류가 발생했습니다. 권한 설정을 확인하세요 (Apps Script 배포 상태 확인 필수).');
             }
             return text;
         }
