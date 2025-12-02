@@ -1,3 +1,4 @@
+
 import { Member, AttendanceRecord, AttendanceStatus, DailyStats, VacationRequest, VacationStatus, VacationBalance } from '../types';
 import { INITIAL_MEMBERS } from '../constants';
 

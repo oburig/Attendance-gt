@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { generateCSV, clearAllData, resetMembersFromCode, generateTemplateCSV, updateMembers, saveSheetUrl, getSheetUrl, sendToGoogleSheet } from '../services/storageService';
 import { Download, FileSpreadsheet, Trash2, Copy, Check, Users, RefreshCw, Upload, FileDown, Settings, HelpCircle, AlertOctagon, CloudUpload, Link, ChevronDown, ChevronUp, LogOut, Shield } from 'lucide-react';
@@ -197,7 +198,7 @@ export const DataExport: React.FC = () => {
       }
   };
 
-  // Improved Apps Script v6: Uses getDisplayValues() and trim() for robust date matching
+  // Improved Apps Script v7: Strong date normalization
   const appsScriptCode = `function doGet(e) {
   return ContentService.createTextOutput("연결 성공! 스크립트가 정상 작동 중입니다.").setMimeType(ContentService.MimeType.TEXT);
 }
@@ -217,7 +218,7 @@ function doPost(e) {
     }
     
     // 2. 기존 데이터 로드
-    // getDisplayValues()를 사용하여 셀에 보이는 그대로(문자열) 가져와서 비교합니다.
+    // getDisplayValues()를 사용하여 셀에 보이는 그대로 가져옴
     var lastRow = sheet.getLastRow();
     var existingData = [];
     if (lastRow > 1) {
@@ -228,24 +229,30 @@ function doPost(e) {
     var appends = [];
     var timestamp = new Date().toLocaleString();
 
+    // 날짜 정규화 헬퍼 함수 (숫자만 남김: 2024-05-21 -> 20240521)
+    // 시트의 서식이 달라도(2024. 5. 21) 숫자만 비교하여 매칭률 극대화
+    var normalizeDate = function(d) {
+        if(!d) return "";
+        return d.toString().replace(/[^0-9]/g, "").slice(0, 8); 
+    };
+
     records.forEach(function(record) {
       var foundRowIndex = -1;
+      var targetDate = normalizeDate(record.date);
       
-      // 기존 데이터에서 날짜와 이름이 같은 행 찾기
-      // trim()을 사용하여 보이지 않는 공백 문제 제거
+      // 기존 데이터 스캔
       for (var i = 0; i < existingData.length; i++) {
-        var exDate = existingData[i][0].toString().trim();
+        var exDate = normalizeDate(existingData[i][0]);
         var exName = existingData[i][1].toString().trim();
         
-        if (exDate == record.date.trim() && exName == record.name.trim()) {
-          foundRowIndex = i + 2; // 헤더(1) + 0-based index(i) + 1 = 실제 행 번호
+        if (exDate === targetDate && exName == record.name.trim()) {
+          foundRowIndex = i + 2; 
           break;
         }
       }
 
       if (foundRowIndex !== -1) {
-        // [업데이트] 전송일시(A), 상태(H), 비고(I), 출근(J), 퇴근(K)
-        // 덮어쓰기 로직: 기존 데이터가 있어도 무조건 앱에서 보낸 데이터로 최신화합니다.
+        // [업데이트]
         sheet.getRange(foundRowIndex, 1).setValue(timestamp);
         sheet.getRange(foundRowIndex, 8, 1, 4).setValues([[record.status, record.note, record.checkInTime, record.checkOutTime]]);
       } else {
@@ -259,7 +266,6 @@ function doPost(e) {
       }
     });
 
-    // 신규 데이터 일괄 추가
     if (appends.length > 0) {
       sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, appends[0].length).setValues(appends);
     }
@@ -286,7 +292,7 @@ function doPost(e) {
       {/* 1. Google Sheet Integration */}
       <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
           <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
-              <CloudUpload className="text-green-600"/> 구글 시트 실시간 연동
+              <CloudUpload className="text-green-600"/> 구글 시트 연동 설정
           </h2>
           <p className="text-slate-500 mb-6">
               출석/퇴근 데이터를 구글 시트에 안전하게 저장합니다.
@@ -303,8 +309,8 @@ function doPost(e) {
               
               {isGuideOpen && (
                   <div className="mt-4 space-y-4 text-sm text-slate-700 bg-white p-4 rounded-lg border border-green-200">
-                      <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded font-bold mb-4">
-                          ⚠️ 스크립트가 v6로 업데이트 되었습니다. 반드시 아래 새 코드로 교체하고 [새 배포] 해주세요.
+                      <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded font-bold mb-4 animate-pulse-slow">
+                          ⚠️ 스크립트가 v7 (최종)로 업데이트 되었습니다. 반드시 아래 새 코드로 교체하고 [새 배포] 해주세요.
                       </div>
                       <ol className="list-decimal list-inside space-y-3">
                           <li>
@@ -328,7 +334,7 @@ function doPost(e) {
                           <li>
                               설정창에서 다음 내용을 꼭 확인하세요:
                               <ul className="list-disc list-inside ml-4 mt-1 text-slate-600 bg-slate-50 p-2 rounded">
-                                  <li>설명: v6 (최종)</li>
+                                  <li>설명: v7 (날짜인식개선)</li>
                                   <li>다음 사용자 권한으로 실행: <strong>나(Me)</strong></li>
                                   <li>액세스 권한이 있는 사용자: <strong>모든 사용자 (Anyone)</strong> <span className="text-red-500 font-bold">← 필수!</span></li>
                               </ul>
@@ -346,44 +352,47 @@ function doPost(e) {
 
           <div className="flex flex-col md:flex-row gap-4 items-end">
               <div className="flex-1 w-full space-y-2">
-                  <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
-                      <Link size={14}/> 구글 Apps Script 웹 앱 URL
+                  <label className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <Link size={16} className="text-blue-500"/> 구글 Apps Script 웹 앱 URL
+                      {sheetUrl && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">연결됨</span>}
                   </label>
                   <div className="flex gap-2">
                       <input 
                         type="text" 
                         placeholder="https://script.google.com/.../exec" 
-                        className="flex-1 px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-sm font-mono"
+                        className="flex-1 px-4 py-3 border-2 border-blue-100 bg-blue-50/50 rounded-lg focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm font-mono text-slate-800 transition-all placeholder-slate-400"
                         value={sheetUrl}
                         onChange={(e) => setSheetUrl(e.target.value)}
                       />
                       <button 
                         onClick={handleSaveUrl}
-                        className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200 transition-colors whitespace-nowrap"
+                        className="px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap shadow-sm"
                       >
                         주소 저장
                       </button>
                   </div>
-                  <p className="text-xs text-slate-400 pl-1">URL은 반드시 <code>/exec</code>로 끝나야 합니다.</p>
+                  <p className="text-xs text-slate-500 pl-1">
+                      * URL은 반드시 <code>/exec</code>로 끝나야 합니다. (저장 후 전송 테스트를 권장합니다)
+                  </p>
               </div>
               
               <button 
                 onClick={handleSendToSheet}
                 disabled={isSending || !sheetUrl}
-                className={`px-6 py-2 rounded-lg font-bold text-white shadow-md transition-all flex items-center gap-2 whitespace-nowrap h-[42px]
+                className={`px-6 py-3 rounded-lg font-bold text-white shadow-md transition-all flex items-center gap-2 whitespace-nowrap h-[50px]
                     ${isSending || !sheetUrl ? 'bg-slate-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 shadow-green-200'}
                 `}
               >
                   {isSending ? (
                       <>전송 중...</>
                   ) : (
-                      <><CloudUpload size={18}/> 오늘 데이터 강제 전송</>
+                      <><CloudUpload size={20}/> 전송 테스트</>
                   )}
               </button>
           </div>
       </div>
 
-      {/* Member Management & Export sections... (Same as before) */}
+      {/* Member Management & Export sections... */}
       <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
           <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
               <Users className="text-indigo-600"/> 구성원 명단 관리
@@ -392,7 +401,6 @@ function doPost(e) {
               직원 명단을 업로드하거나 초기화할 수 있습니다.
           </p>
           
-          {/* ... Upload controls (Same as before) ... */}
            <div className="flex flex-col gap-6 border-t border-slate-100 pt-6">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                   <div className="flex flex-col gap-2">
